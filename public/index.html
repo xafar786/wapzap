@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WAPZAP</title>
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="bolt">⚡</span> WAPZAP</div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="connect">Connect</button>
+      <button class="tab" data-tab="scraper">Maps Scraper</button>
+      <button class="tab" data-tab="new">New campaign</button>
+      <button class="tab" data-tab="dashboard">Dashboard</button>
+    </nav>
+    <div class="conn" id="connPill"><span class="dot"></span><span id="connText">Connecting…</span></div>
+  </header>
+
+  <main>
+    <!-- ================= CONNECT ================= -->
+    <section id="tab-connect" class="page active">
+      <div class="card narrow center">
+        <h1>Connect WhatsApp</h1>
+        <div id="connectBody"><p class="muted">Starting…</p></div>
+      </div>
+    </section>
+
+    <!-- ================= GOOGLE MAPS SCRAPER ================= -->
+    <section id="tab-scraper" class="page">
+      <div class="card">
+        <h2>Google Maps Scraper</h2>
+        <p class="muted">Search Google Maps for businesses and collect their names and phone numbers,
+          then push them straight into a campaign.</p>
+        <div class="row wrap searchrow">
+          <input type="text" id="sQuery" placeholder="e.g. Restaurants in Islamabad" maxlength="200">
+          <label class="inline">Max results<input type="number" id="sMax" min="1" max="300" value="50"></label>
+          <button class="btn primary" id="sStart">Search</button>
+        </div>
+        <p class="muted small">Google Maps shows at most about 120 places per search. For more, run several narrower
+          searches, e.g. “Restaurants in F-7 Islamabad”, “Restaurants in Blue Area Islamabad”.</p>
+      </div>
+
+      <div id="sEmpty" class="card narrow center">
+        <p class="muted">No searches yet. Type a search above to start.</p>
+      </div>
+
+      <div id="sPanel" class="card hidden">
+        <div class="row between wrap">
+          <div class="row">
+            <select id="sSelect"></select>
+            <span class="badge" id="sStatus"></span>
+          </div>
+          <div class="row wrap">
+            <button class="btn danger" id="sStop">Stop</button>
+            <button class="btn primary" id="sPush">Use in a new campaign →</button>
+            <a class="btn ghost" id="sDownload" href="#">Download CSV</a>
+            <button class="btn danger" id="sDelete">Delete</button>
+          </div>
+        </div>
+
+        <div id="sProgressBox">
+          <div class="progress"><div class="bar" id="sBar"></div></div>
+          <div class="muted" id="sStage"></div>
+        </div>
+        <div id="sError" class="alert error hidden"></div>
+
+        <div class="chips" id="sChips"></div>
+        <label class="check"><input type="checkbox" id="sMobileOnly" checked>
+          Only mobile numbers <span class="muted small">(landlines normally are not on WhatsApp)</span></label>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Type</th><th>Category</th><th>Rating</th><th>Address</th></tr></thead>
+            <tbody id="sRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= NEW CAMPAIGN ================= -->
+    <section id="tab-new" class="page">
+      <div class="card">
+        <h2><span class="step">1</span> Upload contacts</h2>
+        <p class="muted">A CSV file with two columns: <code>name</code> and <code>number</code>.
+          Numbers without a country code are treated as Pakistan (+92).</p>
+        <label class="filebtn">
+          <input type="file" id="csvFile" accept=".csv,text/csv">
+          <span>Choose CSV file</span>
+        </label>
+        <span class="muted small">or get contacts from the <a href="#" id="goScraper">Maps Scraper</a></span>
+        <div id="csvName" class="muted"></div>
+        <div id="csvError" class="alert error hidden"></div>
+        <div id="csvSummary" class="chips hidden"></div>
+        <div id="csvTableWrap" class="tablewrap hidden">
+          <table>
+            <thead><tr><th>Row</th><th>Name</th><th>Number in file</th><th>Will send to</th><th>Check</th></tr></thead>
+            <tbody id="csvRows"></tbody>
+          </table>
+        </div>
+        <p id="csvNote" class="muted small hidden"></p>
+      </div>
+
+      <div class="card">
+        <h2><span class="step">2</span> Write your message</h2>
+        <div class="split">
+          <div>
+            <textarea id="message" rows="9" placeholder="Assalam o Alaikum {name}, ..."></textarea>
+            <div class="row between">
+              <button class="btn ghost small" id="insertName" type="button">+ Insert {name}</button>
+              <span class="muted small" id="charCount">0 characters</span>
+            </div>
+            <div class="attach">
+              <div class="row wrap" id="attachButtons">
+                <label class="btn ghost small filepick">
+                  <input type="file" id="mediaFile">📎 Attach photo, video or file
+                </label>
+                <button class="btn ghost small" id="recStart" type="button">🎙 Record voice message</button>
+              </div>
+              <div class="row wrap hidden" id="recBox">
+                <span class="recdot"></span>
+                <strong id="recTime">0:00</strong>
+                <span class="muted small">Recording…</span>
+                <button class="btn primary small" id="recStop" type="button">Stop &amp; use</button>
+                <button class="btn ghost small" id="recCancel" type="button">Cancel</button>
+              </div>
+              <div class="row wrap hidden" id="attachBusy"><div class="spinner tiny"></div><span class="muted small">Preparing attachment…</span></div>
+              <div class="row wrap hidden" id="attachChip">
+                <span class="badge" id="attachKind"></span>
+                <span id="attachName"></span>
+                <span class="muted small" id="attachSize"></span>
+                <button class="btn danger small" id="attachRemove" type="button">Remove</button>
+              </div>
+              <p class="muted small" id="attachHint"></p>
+            </div>
+            <p id="nameWarn" class="alert warn hidden">Your message has no <code>{name}</code> placeholder, so everyone gets the exact same text.</p>
+          </div>
+          <div>
+            <div class="muted small">Live preview <span id="previewFor"></span></div>
+            <div class="phone"><div class="bubble"><div id="previewMedia"></div><div id="preview"></div></div></div>
+            <button class="btn ghost small" id="testNew" type="button">Send test to my own number</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="step">3</span> Schedule</h2>
+        <div class="grid">
+          <label>Campaign name<input type="text" id="cName" placeholder="e.g. November offer"></label>
+          <label>Start date<input type="date" id="cStartDate"></label>
+          <label>Daily limit (messages per day)<input type="number" id="cDaily" min="1" value="50"></label>
+          <label>Send from<input type="time" id="cStart" value="09:00"></label>
+          <label>Send until<input type="time" id="cEnd" value="18:00"></label>
+          <span></span>
+          <label>Shortest delay between messages (seconds)<input type="number" id="cDelayMin" min="1" value="30"></label>
+          <label>Longest delay between messages (seconds)<input type="number" id="cDelayMax" min="1" value="90"></label>
+        </div>
+        <p class="muted small">A random delay between the shortest and longest value is used after every message.
+          Set both to the same number for a fixed delay.</p>
+        <p class="muted" id="estimate"></p>
+        <div class="row">
+          <button class="btn primary" id="createBtn" disabled>Create campaign &amp; start</button>
+          <span class="muted small" id="createHint"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= DASHBOARD ================= -->
+    <section id="tab-dashboard" class="page">
+      <div id="dashEmpty" class="card narrow center hidden">
+        <h2>No campaigns yet</h2>
+        <p class="muted">Create one in the “New campaign” tab.</p>
+      </div>
+
+      <div id="dash" class="hidden">
+        <div class="card">
+          <div class="row between wrap">
+            <div class="row">
+              <select id="campaignSelect"></select>
+              <span class="badge" id="cStatus"></span>
+            </div>
+            <div class="row wrap">
+              <button class="btn primary" id="pauseBtn">Pause</button>
+              <button class="btn primary" id="resumeBtn">Resume</button>
+              <button class="btn ghost" id="testDash">Send test to my own number</button>
+              <button class="btn ghost" id="retryBtn">Retry failed</button>
+              <button class="btn danger" id="deleteBtn">Delete</button>
+            </div>
+          </div>
+
+          <div class="progress"><div class="bar" id="bar"></div></div>
+          <div class="row between">
+            <strong id="progressText"></strong>
+            <span class="muted" id="schedText"></span>
+          </div>
+
+          <div class="stats">
+            <div class="stat"><div class="num" id="sTotal">0</div><div class="lbl">Total</div></div>
+            <div class="stat"><div class="num" id="sPending">0</div><div class="lbl">Pending</div></div>
+            <div class="stat ok"><div class="num" id="sSent">0</div><div class="lbl">Sent</div></div>
+            <div class="stat bad"><div class="num" id="sFailed">0</div><div class="lbl">Failed</div></div>
+            <div class="stat"><div class="num" id="sToday">0</div><div class="lbl">Sent today</div></div>
+          </div>
+
+          <details id="settingsBox">
+            <summary>Message &amp; schedule settings</summary>
+            <div class="grid">
+              <label>Start date<input type="date" id="eStartDate"></label>
+              <label>Daily limit<input type="number" id="eDaily" min="1"></label>
+              <span></span>
+              <label>Send from<input type="time" id="eStart"></label>
+              <label>Send until<input type="time" id="eEnd"></label>
+              <span></span>
+              <label>Shortest delay (seconds)<input type="number" id="eDelayMin" min="1"></label>
+              <label>Longest delay (seconds)<input type="number" id="eDelayMax" min="1"></label>
+            </div>
+            <label>Message<textarea id="eMessage" rows="5"></textarea></label>
+            <p class="muted small" id="eMedia"></p>
+            <button class="btn primary small" id="saveSettings">Save changes</button>
+          </details>
+        </div>
+
+        <div class="card">
+          <div class="row between wrap">
+            <h2>Contacts</h2>
+            <div class="row filters">
+              <button class="chip active" data-filter="">All</button>
+              <button class="chip" data-filter="pending">Pending</button>
+              <button class="chip" data-filter="sent">Sent</button>
+              <button class="chip" data-filter="failed">Failed</button>
+            </div>
+          </div>
+          <div class="tablewrap">
+            <table>
+              <thead><tr><th>#</th><th>Name</th><th>Number</th><th>Status</th><th>Details</th></tr></thead>
+              <tbody id="contactRows"></tbody>
+            </table>
+          </div>
+          <div class="row between pager">
+            <button class="btn ghost small" id="prevPage">← Previous</button>
+            <span class="muted small" id="pageInfo"></span>
+            <button class="btn ghost small" id="nextPage">Next →</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "wapzap",
+  "version": "1.2.0",
+  "description": "WAPZAP - local web app for personalised WhatsApp messages in bulk",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "build:deb": "bash packaging/build-deb.sh"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "csv-parse": "^7.0.3",
+    "express": "^5.3.0",
+    "libphonenumber-js": "^1.13.16",
+    "pino": "^10.4.0",
+    "puppeteer-core": "^25.17.0",
+    "qrcode": "^1.5.4"
+  }
+}

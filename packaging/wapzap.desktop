@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=WAPZAP
+Comment=Send personalised WhatsApp messages in bulk
+Exec=wapzap start
+Icon=wapzap
+Terminal=false
+Categories=Network;Utility;
+Keywords=whatsapp;bulk;messages;
+Actions=Stop;
+
+[Desktop Action Stop]
+Name=Stop WAPZAP
+Exec=wapzap stop

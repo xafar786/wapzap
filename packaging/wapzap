@@ -1,0 +1,95 @@
+#!/bin/bash
+# WAPZAP launcher.
+#   wapzap          start the app (if it is not already running) and open it in the browser
+#   wapzap stop     stop the app
+#   wapzap status   say whether it is running
+#   wapzap logs     show the last lines of the log file
+set -u
+
+APP_DIR="${WAPZAP_APP_DIR:-/opt/wapzap}"
+DATA_DIR="${WAPZAP_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/wapzap}"
+PORT="${WAPZAP_PORT:-3210}"
+URL="http://localhost:$PORT"
+PID_FILE="$DATA_DIR/wapzap.pid"
+LOG_FILE="$DATA_DIR/wapzap.log"
+
+mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR" # holds your WhatsApp session and contact lists
+
+running_pid() {
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null)" || return 1
+  [ -n "$pid" ] || return 1
+  # Make sure the PID really is our app and not a recycled number.
+  grep -qa "$APP_DIR/server.js" "/proc/$pid/cmdline" 2>/dev/null || return 1
+  echo "$pid"
+}
+
+notify() {
+  echo "$1"
+  if [ ! -t 1 ] && command -v notify-send >/dev/null 2>&1; then
+    notify-send -i wapzap "WAPZAP" "$1" || true
+  fi
+}
+
+start() {
+  if pid="$(running_pid)"; then
+    echo "WAPZAP is already running (process $pid)."
+  else
+    # Keep the log from growing forever.
+    if [ -f "$LOG_FILE" ] && [ "$(stat -c %s "$LOG_FILE")" -gt 5000000 ]; then
+      mv -f "$LOG_FILE" "$LOG_FILE.old"
+    fi
+    WAPZAP_DATA_DIR="$DATA_DIR" PORT="$PORT" NODE_ENV=production \
+      setsid "$APP_DIR/node" "$APP_DIR/server.js" >>"$LOG_FILE" 2>&1 </dev/null &
+    echo $! >"$PID_FILE"
+
+    # Wait until the web page answers (up to ~15 seconds).
+    for _ in $(seq 1 30); do
+      if curl -fs -o /dev/null "$URL/api/status" 2>/dev/null; then break; fi
+      if ! running_pid >/dev/null; then
+        notify "WAPZAP could not start. See the log: $LOG_FILE"
+        tail -n 15 "$LOG_FILE" 2>/dev/null
+        exit 1
+      fi
+      sleep 0.5
+    done
+    echo "WAPZAP started. It keeps running in the background until you run: wapzap stop"
+  fi
+  echo "Opening $URL"
+  [ -n "${WAPZAP_NO_BROWSER:-}" ] || xdg-open "$URL" >/dev/null 2>&1 &
+}
+
+stop() {
+  if pid="$(running_pid)"; then
+    kill "$pid"
+    for _ in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.25
+    done
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid"
+    rm -f "$PID_FILE"
+    notify "WAPZAP stopped. Campaigns will continue when you start it again."
+  else
+    rm -f "$PID_FILE"
+    notify "WAPZAP is not running."
+  fi
+}
+
+case "${1:-start}" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; start ;;
+  status)
+    if pid="$(running_pid)"; then
+      echo "WAPZAP is running (process $pid) at $URL"
+    else
+      echo "WAPZAP is not running."
+    fi
+    ;;
+  logs) tail -n 50 "$LOG_FILE" 2>/dev/null || echo "No log yet." ;;
+  *)
+    echo "Usage: wapzap [start|stop|restart|status|logs]"
+    exit 2
+    ;;
+esac
