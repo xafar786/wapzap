@@ -1,6 +1,6 @@
 {
   "name": "wapzap",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "WAPZAP - local web app for personalised WhatsApp messages in bulk",
   "type": "module",
   "private": true,

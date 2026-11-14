@@ -97,6 +97,19 @@ db.prepare(
    WHERE status = 'running'`
 ).run(Date.now());
 
+// Linked WhatsApp accounts. The login files live in data/accounts/<id>.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS accounts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    label      TEXT NOT NULL,
+    number     TEXT,               -- last number this account connected as
+    created_at INTEGER NOT NULL
+  );
+`);
+if (!db.prepare('PRAGMA table_info(campaigns)').all().some((col) => col.name === 'account_id')) {
+  db.exec('ALTER TABLE campaigns ADD COLUMN account_id INTEGER'); // filled in by whatsapp.init()
+}
+
 // Upgrade databases created before attachments existed.
 if (!db.prepare('PRAGMA table_info(campaigns)').all().some((col) => col.name === 'media_id')) {
   db.exec('ALTER TABLE campaigns ADD COLUMN media_id TEXT');

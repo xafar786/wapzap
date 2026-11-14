@@ -8,7 +8,8 @@ WAPZAP runs entirely on your own computer. It links to your WhatsApp account the
 
 ## Features
 
-- **WhatsApp connect page** – scan a QR code in the browser once; the session is saved and survives restarts.
+- **Multiple WhatsApp accounts** – link several numbers, each by scanning a QR code in the browser once. Logins are saved and survive restarts, and every campaign sends from the account you choose.
+- **Parallel sending** – campaigns on different accounts run at the same time, each account keeping its own delay between messages.
 - **CSV contact upload** – columns `name` and `number`. Rows are previewed, numbers are validated and normalised to international format (default country Pakistan, +92), and duplicates and invalid rows are flagged.
 - **Message editor** – `{name}` placeholder with a live preview.
 - **Attachments** – send a photo, video or document with the text as its caption, or record a voice message in the browser. Files are converted to formats WhatsApp plays on every phone.
@@ -20,9 +21,9 @@ WAPZAP runs entirely on your own computer. It links to your WhatsApp account the
 
 ## Screenshots
 
-| Connect | Google Maps Scraper |
+| WhatsApp accounts | Google Maps Scraper |
 |---|---|
-| ![Connect page with QR code](docs/screenshots/connect.png) | ![Google Maps Scraper results](docs/screenshots/maps-scraper.png) |
+| ![Accounts page with QR codes](docs/screenshots/connect.png) | ![Google Maps Scraper results](docs/screenshots/maps-scraper.png) |
 
 **New campaign** – contacts, message with attachment, live preview and schedule:
 
@@ -75,10 +76,10 @@ The installed app keeps its data in `~/.local/share/wapzap`. Uninstall with `sud
 
 ## How to use it
 
-1. **Connect** – open WhatsApp on your phone → Settings → Linked devices → Link a device, and scan the QR code.
+1. **Link an account** – on the **Accounts** tab, open WhatsApp on your phone → Settings → Linked devices → Link a device, and scan the QR code. Press **+ Add WhatsApp account** to link more numbers.
 2. **Get contacts** – upload a CSV (see [`sample-contacts.csv`](sample-contacts.csv)) or run a search in the **Maps Scraper** and press *Use contacts in a new campaign*.
 3. **Write the message** – use `{name}` where the contact's name should go, optionally add an attachment, and send a test to your own number.
-4. **Schedule** – set the daily limit, sending window, start date and delays, then create the campaign.
+4. **Schedule** – choose which WhatsApp account sends, set the daily limit, sending window, start date and delays, then create the campaign.
 5. **Watch the dashboard** – it shows what has been sent and why the campaign is waiting (outside the window, daily limit reached, and so on).
 
 ### CSV format
@@ -96,6 +97,8 @@ Numbers may be written locally (`0300…`), internationally (`+92…`, `0092…`
 - The computer must be on and the app running for messages to go out.
 - A campaign starts as soon as it is created, within its start date and sending window.
 - If the app stops in the middle of a send, that contact is marked *failed* rather than retried automatically, to avoid sending the same message twice.
+- A campaign sends from one account. You can move it to another account in its settings, for example if a number gets disconnected.
+- Two campaigns on the same account take turns; the daily limit applies to each campaign separately.
 - One attachment per campaign. A voice message is sent first, with the text following as a second message.
 - The Maps Scraper returns at most about 120 places per search (a Google Maps limit). Landlines are excluded from campaigns by default because they are normally not on WhatsApp.
 
@@ -104,7 +107,7 @@ Numbers may be written locally (`0300…`), internationally (`+92…`, `0092…`
 ```
 server.js            Express server and API routes
 src/db.js            SQLite schema and helpers
-src/whatsapp.js      WhatsApp connection and sending (Baileys)
+src/whatsapp.js      WhatsApp accounts, connections and sending (Baileys)
 src/scheduler.js     Sending loop: window, daily limit, delays
 src/csv.js           CSV parsing and phone number normalisation
 src/media.js         Attachment storage and ffmpeg conversion

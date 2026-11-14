@@ -91,6 +91,12 @@ function readMedia(body) {
   return media;
 }
 
+function readAccount(body) {
+  const account = wa.getAccount(body.accountId);
+  if (!account) throw new UserError('Choose which WhatsApp account to send from.');
+  return account;
+}
+
 function campaignDetails(c) {
   const counts = { pending: 0, sending: 0, sent: 0, failed: 0 };
   for (const row of db
@@ -99,8 +105,10 @@ function campaignDetails(c) {
     counts[row.status] = row.n;
   }
   const total = counts.pending + counts.sending + counts.sent + counts.failed;
+  const account = wa.getAccount(c.account_id);
   return {
     ...c,
+    account: account ? { id: account.id, label: account.label, number: account.number } : null,
     counts,
     total,
     sentToday: sentToday(c.id),
@@ -117,12 +125,54 @@ function getCampaign(id) {
 
 // ---------- WhatsApp ----------
 
-app.get('/api/status', (req, res) => {
-  res.json(wa.getStatus());
+function getAccountOr404(id) {
+  const account = wa.getAccount(id);
+  if (!account) throw new UserError('WhatsApp account not found.');
+  return account;
+}
+
+app.get('/api/accounts', (req, res) => {
+  res.json(wa.listAccounts());
 });
 
-app.post('/api/logout', async (req, res) => {
-  await wa.logout();
+app.post('/api/accounts', (req, res) => {
+  let id;
+  try {
+    id = wa.createAccount(req.body?.label);
+  } catch (err) {
+    throw new UserError(err.message);
+  }
+  res.json(wa.getAccount(id));
+});
+
+app.patch('/api/accounts/:id', (req, res) => {
+  const account = getAccountOr404(req.params.id);
+  try {
+    wa.renameAccount(account.id, req.body?.label);
+  } catch (err) {
+    throw new UserError(err.message);
+  }
+  res.json(wa.getAccount(account.id));
+});
+
+// Unlink the phone but keep the account entry (a new QR code is shown).
+app.post('/api/accounts/:id/logout', async (req, res) => {
+  const account = getAccountOr404(req.params.id);
+  await wa.logout(account.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/accounts/:id', async (req, res) => {
+  const account = getAccountOr404(req.params.id);
+  const busy = db
+    .prepare("SELECT COUNT(*) AS n FROM campaigns WHERE account_id = ? AND status != 'completed'")
+    .get(account.id).n;
+  if (busy) {
+    throw new UserError(
+      `${busy} unfinished campaign${busy > 1 ? 's use' : ' uses'} this account. Move them to another account or delete them first.`
+    );
+  }
+  await wa.removeAccount(account.id);
   res.json({ ok: true });
 });
 
@@ -130,9 +180,10 @@ app.post('/api/test', async (req, res) => {
   const media = readMedia(req.body);
   const message = readMessage(req.body, !!media);
   const name = String(req.body.name || 'Test Name').trim();
-  if (!wa.isConnected()) throw new UserError('Connect WhatsApp first.');
-  await wa.sendToSelf(renderMessage(message, name), media);
-  res.json({ ok: true, to: wa.getStatus().me });
+  const account = readAccount(req.body);
+  if (!wa.isConnected(account.id)) throw new UserError(`WhatsApp account "${account.label}" is not connected.`);
+  await wa.sendToSelf(account.id, renderMessage(message, name), media);
+  res.json({ ok: true, to: wa.getAccount(account.id).number, label: account.label });
 });
 
 // ---------- attachments ----------
@@ -223,6 +274,7 @@ app.post('/api/campaigns', (req, res) => {
   const media = readMedia(body);
   const message = readMessage(body, !!media);
   const s = readSchedule(body);
+  const account = readAccount(body);
 
   let parsed;
   try {
@@ -237,10 +289,10 @@ app.post('/api/campaigns', (req, res) => {
     const result = db
       .prepare(
         `INSERT INTO campaigns
-           (name, message, daily_limit, window_start, window_end, start_date, delay_min, delay_max, status, created_at, media_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`
+           (name, message, daily_limit, window_start, window_end, start_date, delay_min, delay_max, status, created_at, media_id, account_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`
       )
-      .run(name, message, s.daily_limit, s.window_start, s.window_end, s.start_date, s.delay_min, s.delay_max, Date.now(), media?.id ?? null);
+      .run(name, message, s.daily_limit, s.window_start, s.window_end, s.start_date, s.delay_min, s.delay_max, Date.now(), media?.id ?? null, account.id);
     const campaignId = Number(result.lastInsertRowid);
     const insert = db.prepare('INSERT INTO contacts (campaign_id, name, number) VALUES (?, ?, ?)');
     for (const r of valid) insert.run(campaignId, r.name, r.number);
@@ -258,6 +310,7 @@ app.patch('/api/campaigns/:id', (req, res) => {
   const c = getCampaign(req.params.id);
   const changes = readSchedule(req.body || {}, { partial: true });
   if (req.body?.message !== undefined) changes.message = readMessage(req.body, !!c.media_id);
+  if (req.body?.accountId !== undefined) changes.account_id = readAccount(req.body).id;
 
   const merged = { ...c, ...changes };
   if (merged.delay_min > merged.delay_max) {
@@ -348,6 +401,6 @@ app.listen(PORT, HOST, () => {
   console.log('');
 });
 
-wa.connect().catch((err) => console.error('WhatsApp connection error:', err.message));
+wa.init();
 cleanupOrphans();
 startScheduler();

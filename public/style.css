@@ -235,3 +235,17 @@ tr.dim td { color: var(--muted); }
 .badge.done, .badge.mobile { background: var(--ok-bg); color: var(--ok); }
 .badge.stopped, .badge.landline { background: var(--warn-bg); color: var(--warn); }
 #sRows td:nth-child(3) { white-space: nowrap; }
+
+/* ---------- whatsapp accounts ---------- */
+.pagehead { margin-bottom: 16px; align-items: flex-start; }
+.pagehead h1 { margin-bottom: 2px; }
+.pagehead p { margin: 0; }
+.accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
+.account { margin-bottom: 0; text-align: center; display: flex; flex-direction: column; gap: 8px; }
+.account h2 { justify-content: center; margin: 0; overflow-wrap: anywhere; }
+.account .qr { width: 220px; height: 220px; align-self: center; }
+.account .steps { margin: 0 auto; font-size: 13px; padding-left: 18px; }
+.account .bigcheck { width: 64px; height: 64px; font-size: 32px; margin: 4px auto; }
+.account .actions { justify-content: center; margin-top: auto; padding-top: 8px; }
+.account .grow { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+select.full { width: 100%; min-width: 0; margin-top: 5px; font-weight: 400; }

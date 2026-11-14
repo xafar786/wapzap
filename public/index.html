@@ -11,7 +11,7 @@
   <header class="topbar">
     <div class="brand"><span class="bolt">⚡</span> WAPZAP</div>
     <nav class="tabs">
-      <button class="tab active" data-tab="connect">Connect</button>
+      <button class="tab active" data-tab="connect">Accounts</button>
       <button class="tab" data-tab="scraper">Maps Scraper</button>
       <button class="tab" data-tab="new">New campaign</button>
       <button class="tab" data-tab="dashboard">Dashboard</button>
@@ -22,10 +22,14 @@
   <main>
     <!-- ================= CONNECT ================= -->
     <section id="tab-connect" class="page active">
-      <div class="card narrow center">
-        <h1>Connect WhatsApp</h1>
-        <div id="connectBody"><p class="muted">Starting…</p></div>
+      <div class="row between wrap pagehead">
+        <div>
+          <h1>WhatsApp accounts</h1>
+          <p class="muted">Link one or more WhatsApp numbers. Each campaign sends from the account you choose.</p>
+        </div>
+        <button class="btn primary" id="addAccount">+ Add WhatsApp account</button>
       </div>
+      <div id="accountList" class="accounts"><p class="muted">Starting…</p></div>
     </section>
 
     <!-- ================= GOOGLE MAPS SCRAPER ================= -->
@@ -153,7 +157,7 @@
           <label>Daily limit (messages per day)<input type="number" id="cDaily" min="1" value="50"></label>
           <label>Send from<input type="time" id="cStart" value="09:00"></label>
           <label>Send until<input type="time" id="cEnd" value="18:00"></label>
-          <span></span>
+          <label>Send from WhatsApp account<select id="cAccount" class="full"></select></label>
           <label>Shortest delay between messages (seconds)<input type="number" id="cDelayMin" min="1" value="30"></label>
           <label>Longest delay between messages (seconds)<input type="number" id="cDelayMax" min="1" value="90"></label>
         </div>
@@ -180,6 +184,7 @@
             <div class="row">
               <select id="campaignSelect"></select>
               <span class="badge" id="cStatus"></span>
+              <span class="muted small" id="cFrom"></span>
             </div>
             <div class="row wrap">
               <button class="btn primary" id="pauseBtn">Pause</button>
@@ -209,7 +214,7 @@
             <div class="grid">
               <label>Start date<input type="date" id="eStartDate"></label>
               <label>Daily limit<input type="number" id="eDaily" min="1"></label>
-              <span></span>
+              <label>WhatsApp account<select id="eAccount" class="full"></select></label>
               <label>Send from<input type="time" id="eStart"></label>
               <label>Send until<input type="time" id="eEnd"></label>
               <span></span>

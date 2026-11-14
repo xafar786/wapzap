@@ -51,65 +51,135 @@ function showTab(name) {
 }
 $$('.tab').forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
 
-// ================= connect =================
-let wa = { state: 'connecting' };
-let lastConnectKey = '';
+// ================= whatsapp accounts =================
+let accounts = [];
+let serverUp = true;
+let lastAccountsKey = '';
 
-async function pollStatus() {
+const accountName = (a) => (a.number ? `${a.label} (+${a.number})` : a.label);
+
+async function pollAccounts() {
   try {
-    wa = await api('/api/status');
+    accounts = await api('/api/accounts');
+    serverUp = true;
   } catch {
-    wa = { state: 'offline' };
+    serverUp = false;
   }
-  const on = wa.state === 'connected';
-  $('#connPill').classList.toggle('on', on);
-  $('#connText').textContent = on
-    ? `Connected · +${wa.me}`
-    : wa.state === 'qr'
-      ? 'Waiting for QR scan'
-      : wa.state === 'offline'
-        ? 'App is not running'
-        : 'Connecting…';
+  const connected = accounts.filter((a) => a.state === 'connected');
+  $('#connPill').classList.toggle('on', serverUp && connected.length > 0);
+  $('#connText').textContent = !serverUp
+    ? 'App is not running'
+    : accounts.length === 1
+      ? connected.length
+        ? `Connected · +${connected[0].me}`
+        : accounts[0].state === 'qr'
+          ? 'Waiting for QR scan'
+          : 'Connecting…'
+      : `${connected.length} of ${accounts.length} accounts connected`;
 
-  // Only redraw the connect page when something actually changed.
-  const key = wa.state + '|' + (wa.qr || '') + '|' + (wa.me || '');
-  if (key === lastConnectKey) return;
-  lastConnectKey = key;
+  fillAccountSelect($('#cAccount'));
+  fillAccountSelect($('#eAccount'));
 
-  const body = $('#connectBody');
-  if (on) {
-    body.innerHTML = `
-      <div class="bigcheck">✓</div>
-      <p><strong>Connected as +${esc(wa.me)}</strong></p>
-      <p class="muted">Your session is saved on this computer, so you will not need to scan again after a restart.</p>
-      <div class="row" style="justify-content:center">
-        <button class="btn primary" id="goNew">Create a campaign</button>
-        <button class="btn danger" id="logoutBtn">Disconnect this number</button>
+  // Only redraw the cards when something actually changed.
+  const key = serverUp + '|' + accounts.map((a) => [a.id, a.label, a.state, a.qr, a.me, a.lastError].join('~')).join('|');
+  if (key === lastAccountsKey) return;
+  lastAccountsKey = key;
+
+  const list = $('#accountList');
+  if (!serverUp) {
+    list.innerHTML = `<p class="alert error">Cannot reach the WAPZAP app. Is it still running?</p>`;
+    return;
+  }
+  list.innerHTML = accounts
+    .map((a) => {
+      let body;
+      if (a.state === 'connected') {
+        body = `<div class="grow">
+            <div class="bigcheck">✓</div>
+            <strong>Connected as +${esc(a.me)}</strong>
+            <span class="muted small">The login is saved on this computer.</span>
+          </div>`;
+      } else if (a.state === 'qr') {
+        body = `<img class="qr" src="${a.qr}" alt="WhatsApp QR code">
+          <ol class="steps muted">
+            <li>Open WhatsApp on the phone</li>
+            <li><strong>Settings → Linked devices → Link a device</strong></li>
+            <li>Scan this code</li>
+          </ol>`;
+      } else {
+        body = `<div class="grow"><div class="spinner"></div><span class="muted">Connecting…</span>
+          ${a.lastError ? `<span class="muted small">Last problem: ${esc(a.lastError)}</span>` : ''}</div>`;
+      }
+      return `<div class="card account" data-id="${a.id}">
+        <h2>${esc(a.label)}</h2>
+        ${body}
+        <div class="row wrap actions">
+          <button class="btn ghost small" data-act="rename">Rename</button>
+          ${a.state === 'connected' ? '<button class="btn ghost small" data-act="logout">Disconnect</button>' : ''}
+          <button class="btn danger small" data-act="remove">Remove</button>
+        </div>
       </div>`;
-    $('#goNew').onclick = () => showTab('new');
-    $('#logoutBtn').onclick = (e) => {
-      if (!confirm('Disconnect WhatsApp? Running campaigns will wait until you scan the QR code again.')) return;
-      run(e.target, async () => {
-        await api('/api/logout', 'POST');
-        toast('Disconnected.');
-      });
-    };
-  } else if (wa.state === 'qr') {
-    body.innerHTML = `
-      <img class="qr" src="${wa.qr}" alt="WhatsApp QR code">
-      <ol class="steps">
-        <li>Open WhatsApp on your phone</li>
-        <li>Go to <strong>Settings → Linked devices → Link a device</strong></li>
-        <li>Point your phone at this code</li>
-      </ol>
-      <p class="muted small">The code refreshes by itself every few seconds.</p>`;
-  } else if (wa.state === 'offline') {
-    body.innerHTML = `<p class="alert error">Cannot reach the WAPZAP app. Is it still running in the terminal?</p>`;
-  } else {
-    body.innerHTML = `<div class="spinner"></div><p class="muted">Connecting to WhatsApp…</p>
-      ${wa.lastError ? `<p class="muted small">Last problem: ${esc(wa.lastError)}</p>` : ''}`;
+    })
+    .join('');
+}
+
+// Keeps an account dropdown up to date without disturbing the user's choice.
+function fillAccountSelect(sel) {
+  const html = accounts
+    .map((a) => `<option value="${a.id}">${esc(accountName(a))}${a.state === 'connected' ? '' : ' — not connected'}</option>`)
+    .join('');
+  if (sel.dataset.html === html || document.activeElement === sel) return;
+  const previous = sel.value;
+  sel.innerHTML = html;
+  sel.dataset.html = html;
+  if (accounts.some((a) => String(a.id) === previous)) sel.value = previous;
+  else if (sel.id === 'cAccount') {
+    // Default to the first connected account.
+    const first = accounts.find((a) => a.state === 'connected') || accounts[0];
+    if (first) sel.value = first.id;
   }
 }
+
+$('#addAccount').addEventListener('click', (e) => {
+  const label = prompt('A name for this WhatsApp account (e.g. "Sales phone"):', `Account ${accounts.length + 1}`);
+  if (label === null) return;
+  run(e.target, async () => {
+    await api('/api/accounts', 'POST', { label });
+    await pollAccounts();
+    toast('Account added. Scan its QR code with the phone you want to link.');
+  });
+});
+
+$('#accountList').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const account = accounts.find((a) => a.id === Number(btn.closest('.account').dataset.id));
+  if (!account) return;
+  const act = btn.dataset.act;
+
+  if (act === 'rename') {
+    const label = prompt('New name for this account:', account.label);
+    if (label === null) return;
+    run(btn, async () => {
+      await api(`/api/accounts/${account.id}`, 'PATCH', { label });
+      await pollAccounts();
+    });
+  } else if (act === 'logout') {
+    if (!confirm(`Disconnect "${account.label}"? Its campaigns will wait until you scan a QR code for it again.`)) return;
+    run(btn, async () => {
+      await api(`/api/accounts/${account.id}/logout`, 'POST');
+      await pollAccounts();
+      toast('Disconnected.');
+    });
+  } else if (act === 'remove') {
+    if (!confirm(`Remove "${account.label}" from WAPZAP? The phone will be unlinked.`)) return;
+    run(btn, async () => {
+      await api(`/api/accounts/${account.id}`, 'DELETE');
+      await pollAccounts();
+      toast('Account removed.');
+    });
+  }
+});
 
 // ================= new campaign =================
 let csvText = '';
@@ -325,15 +395,15 @@ $('#insertName').addEventListener('click', () => {
   updateNewForm();
 });
 
-async function sendTest(button, message, name, mediaId) {
+async function sendTest(button, message, name, mediaId, accountId) {
   if (!message.trim() && !mediaId) return toast('Write a message or add an attachment first.', true);
   await run(button, async () => {
-    const r = await api('/api/test', 'POST', { message, name, mediaId });
-    toast(`Test sent to your own number (+${r.to}). Look in your "Message yourself" chat.`);
+    const r = await api('/api/test', 'POST', { message, name, mediaId, accountId });
+    toast(`Test sent from "${r.label}" to its own number (+${r.to}). Look in the "Message yourself" chat on that phone.`);
   });
 }
 
-$('#testNew').addEventListener('click', (e) => sendTest(e.target, $('#message').value, firstValidName() || 'Ali', media?.id));
+$('#testNew').addEventListener('click', (e) => sendTest(e.target, $('#message').value, firstValidName() || 'Ali', media?.id, $('#cAccount').value));
 
 $('#createBtn').addEventListener('click', (e) =>
   run(e.target, async () => {
@@ -344,6 +414,7 @@ $('#createBtn').addEventListener('click', (e) =>
       csv: csvText,
       message: $('#message').value,
       mediaId: media?.id,
+      accountId: $('#cAccount').value,
       dailyLimit: $('#cDaily').value,
       windowStart: $('#cStart').value,
       windowEnd: $('#cEnd').value,
@@ -558,6 +629,7 @@ function renderCampaign() {
 
   $('#cStatus').textContent = c.status;
   $('#cStatus').className = 'badge ' + c.status;
+  $('#cFrom').textContent = c.account ? `from ${accountName(c.account)}` : 'account removed';
   $('#bar').style.width = (c.total ? (done / c.total) * 100 : 0) + '%';
   $('#progressText').textContent = `${done} of ${c.total} processed`;
 
@@ -588,6 +660,8 @@ function renderCampaign() {
     $('#eDelayMin').value = c.delay_min;
     $('#eDelayMax').value = c.delay_max;
     $('#eMessage').value = c.message;
+    fillAccountSelect($('#eAccount'));
+    if (c.account) $('#eAccount').value = c.account.id;
     $('#eMedia').innerHTML = c.media
       ? `Attachment: <strong>${KIND_LABEL[c.media.kind]}</strong> ·
          <a href="/api/media/${c.media.id}" target="_blank">${esc(c.media.name)}</a> (${fmtSize(c.media.size)})`
@@ -671,7 +745,7 @@ $('#deleteBtn').addEventListener('click', (e) => {
   settingsLoadedFor = null;
   campaignAction('', 'DELETE')(e);
 });
-$('#testDash').addEventListener('click', (e) => sendTest(e.target, campaign.message, 'Ali', campaign.media?.id));
+$('#testDash').addEventListener('click', (e) => sendTest(e.target, campaign.message, 'Ali', campaign.media?.id, campaign.account_id));
 
 $('#saveSettings').addEventListener('click', (e) =>
   run(e.target, async () => {
@@ -683,6 +757,7 @@ $('#saveSettings').addEventListener('click', (e) =>
       delayMin: $('#eDelayMin').value,
       delayMax: $('#eDelayMax').value,
       message: $('#eMessage').value,
+      accountId: $('#eAccount').value || undefined,
     });
     settingsLoadedFor = null;
     toast('Settings saved.');
@@ -692,10 +767,10 @@ $('#saveSettings').addEventListener('click', (e) =>
 
 // ================= start =================
 renderAttachment();
-pollStatus().then(() => {
-  if (wa.state === 'connected') showTab('dashboard');
+pollAccounts().then(() => {
+  if (accounts.some((a) => a.state === 'connected')) showTab('dashboard');
 });
-setInterval(pollStatus, 2000);
+setInterval(pollAccounts, 2000);
 setInterval(() => {
   if (document.hidden) return;
   if (currentTab === 'dashboard') loadCampaigns();

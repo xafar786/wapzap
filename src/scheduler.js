@@ -49,8 +49,12 @@ function check(c) {
     db.prepare("UPDATE campaigns SET status = 'completed' WHERE id = ?").run(c.id);
     return { state: 'completed', text: 'All contacts processed.' };
   }
-  if (!wa.isConnected()) {
-    return { state: 'waiting', text: 'Waiting for WhatsApp to connect.' };
+  const account = wa.getAccount(c.account_id);
+  if (!account) {
+    return { state: 'waiting', text: 'The WhatsApp account for this campaign was removed. Pick another one in the settings below.' };
+  }
+  if (!wa.isConnected(account.id)) {
+    return { state: 'waiting', text: `Waiting for WhatsApp account "${account.label}" to connect.` };
   }
   if (localDate() < c.start_date) {
     return { state: 'waiting', text: `Scheduled to start on ${c.start_date} at ${c.window_start}.` };
@@ -68,7 +72,8 @@ function check(c) {
       text: `Daily limit reached (${today}/${c.daily_limit}). Continues tomorrow at ${c.window_start}.`,
     };
   }
-  const nextAt = Number(getSetting('next_send_at', 0));
+  // The delay is kept per account, so accounts do not slow each other down.
+  const nextAt = Number(getSetting(`next_send_at:${c.account_id}`, 0));
   if (Date.now() < nextAt) {
     return { state: 'delay', text: 'Waiting before the next message.', nextAt };
   }
@@ -85,13 +90,13 @@ async function sendNext(c) {
   db.prepare("UPDATE contacts SET status = 'sending' WHERE id = ?").run(contact.id);
 
   try {
-    await wa.send(contact.number, renderMessage(c.message, contact.name), getMedia(c.media_id));
+    await wa.send(c.account_id, contact.number, renderMessage(c.message, contact.name), getMedia(c.media_id));
     db.prepare("UPDATE contacts SET status = 'sent', error = NULL, sent_at = ? WHERE id = ?").run(
       Date.now(),
       contact.id
     );
   } catch (err) {
-    if (!wa.isConnected()) {
+    if (!wa.isConnected(c.account_id)) {
       // Connection dropped: not this contact's fault, try again once reconnected.
       db.prepare("UPDATE contacts SET status = 'pending' WHERE id = ?").run(contact.id);
       return;
@@ -105,7 +110,7 @@ async function sendNext(c) {
   const min = Math.min(c.delay_min, c.delay_max);
   const max = Math.max(c.delay_min, c.delay_max);
   const delaySec = min + Math.random() * (max - min);
-  setSetting('next_send_at', Math.round(Date.now() + delaySec * 1000));
+  setSetting(`next_send_at:${c.account_id}`, Math.round(Date.now() + delaySec * 1000));
 }
 
 async function tick() {
@@ -113,16 +118,17 @@ async function tick() {
   busy = true;
   try {
     const running = db.prepare("SELECT * FROM campaigns WHERE status = 'running' ORDER BY id").all();
-    let chosen = null;
+    // Each account sends for one campaign at a time; different accounts work in parallel.
+    const chosen = new Map(); // account id -> campaign
     for (const c of running) {
       const result = check(c);
       if (result.state === 'ready') {
-        if (chosen) result.text = 'Queued behind another running campaign.';
-        else chosen = c;
+        if (chosen.has(c.account_id)) result.text = 'Queued behind another campaign on the same WhatsApp account.';
+        else chosen.set(c.account_id, c);
       }
       info.set(c.id, result);
     }
-    if (chosen) await sendNext(chosen);
+    await Promise.all([...chosen.values()].map((c) => sendNext(c)));
   } catch (err) {
     console.error('Scheduler error:', err);
   } finally {

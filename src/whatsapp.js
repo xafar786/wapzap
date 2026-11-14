@@ -1,5 +1,6 @@
-// WhatsApp connection (Baileys). The login session is saved in data/auth so
-// the QR code only has to be scanned once.
+// WhatsApp connections (Baileys). Several WhatsApp accounts can be linked at
+// once; each has its own saved login in data/accounts/<id>, so a QR code only
+// has to be scanned once per account.
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -10,112 +11,213 @@ import QRCode from 'qrcode';
 import pino from 'pino';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DATA_DIR } from './db.js';
+import { db, DATA_DIR } from './db.js';
 
-const AUTH_DIR = path.join(DATA_DIR, 'auth');
+const ACCOUNTS_DIR = path.join(DATA_DIR, 'accounts');
+const LEGACY_AUTH_DIR = path.join(DATA_DIR, 'auth'); // where the single account used to live
+export const MAX_ACCOUNTS = 10;
 const logger = pino({ level: 'silent' });
 
-let sock = null;
-let generation = 0; // ignores events from sockets we have already replaced
-let reconnectTimer = null;
+const authDir = (id) => path.join(ACCOUNTS_DIR, String(id));
 
-const status = {
-  state: 'connecting', // connecting | qr | connected
-  qr: null,            // data: URL of the QR image while state === 'qr'
-  me: null,            // own number once connected
-  lastError: null,
-};
+// Live state per account id.
+const sessions = new Map();
 
-export function getStatus() {
-  return { ...status };
+function session(id) {
+  id = Number(id);
+  let s = sessions.get(id);
+  if (!s) {
+    s = {
+      sock: null,
+      generation: 0, // ignores events from sockets we have already replaced
+      timer: null,
+      status: { state: 'connecting', qr: null, me: null, lastError: null },
+    };
+    sessions.set(id, s);
+  }
+  return s;
 }
 
-export function isConnected() {
-  return status.state === 'connected' && !!sock;
+// ---------- accounts ----------
+
+export function getAccount(id) {
+  return db.prepare('SELECT * FROM accounts WHERE id = ?').get(Number(id)) || null;
 }
 
-function scheduleReconnect(ms) {
-  clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => connect().catch(onConnectError), ms);
+// Every account with its live connection state.
+// state: connecting | qr | connected. qr is a data: URL while state === 'qr'.
+export function listAccounts() {
+  return db
+    .prepare('SELECT * FROM accounts ORDER BY id')
+    .all()
+    .map((a) => ({ ...a, ...session(a.id).status }));
 }
 
-function onConnectError(err) {
-  status.lastError = err?.message || String(err);
-  scheduleReconnect(5000);
+export function createAccount(label) {
+  const count = db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n;
+  if (count >= MAX_ACCOUNTS) throw new Error(`You can link at most ${MAX_ACCOUNTS} WhatsApp accounts.`);
+  const name = String(label ?? '').trim().slice(0, 40) || `Account ${count + 1}`;
+  const id = Number(
+    db.prepare('INSERT INTO accounts (label, created_at) VALUES (?, ?)').run(name, Date.now()).lastInsertRowid
+  );
+  connect(id).catch((err) => onConnectError(id, err));
+  return id;
 }
 
-export async function connect() {
-  const myGen = ++generation;
-  status.state = 'connecting';
-  status.qr = null;
+export function renameAccount(id, label) {
+  const name = String(label ?? '').trim().slice(0, 40);
+  if (!name) throw new Error('The account name cannot be empty.');
+  db.prepare('UPDATE accounts SET label = ? WHERE id = ?').run(name, Number(id));
+}
 
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const s = makeWASocket({
+// Called once at startup.
+export function init() {
+  fs.mkdirSync(ACCOUNTS_DIR, { recursive: true });
+
+  // Upgrade from the single-account version: its login becomes the first account.
+  if (fs.existsSync(LEGACY_AUTH_DIR)) {
+    const hasAccounts = db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n > 0;
+    if (!hasAccounts && fs.existsSync(path.join(LEGACY_AUTH_DIR, 'creds.json'))) {
+      const id = Number(
+        db.prepare('INSERT INTO accounts (label, created_at) VALUES (?, ?)').run('Account 1', Date.now()).lastInsertRowid
+      );
+      fs.renameSync(LEGACY_AUTH_DIR, authDir(id));
+    } else {
+      fs.rmSync(LEGACY_AUTH_DIR, { recursive: true, force: true });
+    }
+  }
+
+  let accounts = db.prepare('SELECT id FROM accounts ORDER BY id').all();
+  if (!accounts.length) {
+    db.prepare('INSERT INTO accounts (label, created_at) VALUES (?, ?)').run('Account 1', Date.now());
+    accounts = db.prepare('SELECT id FROM accounts ORDER BY id').all();
+  }
+
+  // Campaigns created before multiple accounts existed belong to the first one.
+  db.prepare('UPDATE campaigns SET account_id = ? WHERE account_id IS NULL').run(accounts[0].id);
+
+  for (const a of accounts) connect(a.id).catch((err) => onConnectError(a.id, err));
+}
+
+// ---------- connecting ----------
+
+export function isConnected(id) {
+  const s = sessions.get(Number(id));
+  return !!s && s.status.state === 'connected' && !!s.sock;
+}
+
+function scheduleReconnect(id, ms) {
+  const s = session(id);
+  clearTimeout(s.timer);
+  s.timer = setTimeout(() => connect(id).catch((err) => onConnectError(id, err)), ms);
+}
+
+function onConnectError(id, err) {
+  if (!getAccount(id)) return; // account was removed meanwhile
+  session(id).status.lastError = err?.message || String(err);
+  scheduleReconnect(id, 5000);
+}
+
+async function connect(id) {
+  id = Number(id);
+  if (!getAccount(id)) return;
+  const s = session(id);
+  const myGen = ++s.generation;
+  s.status.state = 'connecting';
+  s.status.qr = null;
+
+  const { state, saveCreds } = await useMultiFileAuthState(authDir(id));
+  if (myGen !== s.generation) return;
+  const sock = makeWASocket({
     auth: state,
     logger,
     browser: Browsers.appropriate('WAPZAP'),
     markOnlineOnConnect: false,
     syncFullHistory: false,
   });
-  sock = s;
+  s.sock = sock;
 
-  s.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', saveCreds);
 
-  s.ev.on('connection.update', async (update) => {
-    if (myGen !== generation) return;
+  sock.ev.on('connection.update', async (update) => {
+    if (myGen !== s.generation) return;
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      status.state = 'qr';
-      status.qr = await QRCode.toDataURL(qr, { margin: 1, width: 320 });
+      const image = await QRCode.toDataURL(qr, { margin: 1, width: 320 });
+      if (myGen !== s.generation) return;
+      s.status.state = 'qr';
+      s.status.qr = image;
     }
 
     if (connection === 'open') {
-      status.state = 'connected';
-      status.qr = null;
-      status.lastError = null;
-      status.me = jidNormalizedUser(s.user?.id || '').split('@')[0] || null;
+      s.status.state = 'connected';
+      s.status.qr = null;
+      s.status.lastError = null;
+      s.status.me = jidNormalizedUser(sock.user?.id || '').split('@')[0] || null;
+      // Remember the number so the account is recognisable while offline.
+      db.prepare('UPDATE accounts SET number = ? WHERE id = ?').run(s.status.me, id);
     }
 
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
-      status.state = 'connecting';
-      status.qr = null;
-      sock = null;
+      s.status.state = 'connecting';
+      s.status.qr = null;
+      s.sock = null;
 
       if (code === DisconnectReason.loggedOut) {
         // Phone unlinked this device: wipe the saved session and show a fresh QR.
-        status.me = null;
-        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-        scheduleReconnect(500);
+        s.status.me = null;
+        fs.rmSync(authDir(id), { recursive: true, force: true });
+        scheduleReconnect(id, 500);
       } else {
         if (code !== DisconnectReason.restartRequired) {
-          status.lastError = lastDisconnect?.error?.message || null;
+          s.status.lastError = lastDisconnect?.error?.message || null;
         }
-        scheduleReconnect(code === DisconnectReason.restartRequired ? 200 : 3000);
+        scheduleReconnect(id, code === DisconnectReason.restartRequired ? 200 : 3000);
       }
     }
   });
 }
 
-export async function logout() {
-  generation++; // stop listening to the old socket
-  clearTimeout(reconnectTimer);
+// Stops the connection and forgets the saved login.
+async function closeAndWipe(id) {
+  const s = session(id);
+  s.generation++; // stop listening to the old socket
+  clearTimeout(s.timer);
   try {
-    await sock?.logout();
+    await s.sock?.logout();
   } catch {
     /* already disconnected */
   }
   try {
-    sock?.end?.(undefined);
+    s.sock?.end?.(undefined);
   } catch {
     /* ignore */
   }
-  sock = null;
-  status.me = null;
-  fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-  await connect();
+  s.sock = null;
+  s.status.me = null;
+  s.status.qr = null;
+  fs.rmSync(authDir(id), { recursive: true, force: true });
 }
+
+// Unlinks the phone but keeps the account entry, showing a new QR code.
+export async function logout(id) {
+  id = Number(id);
+  await closeAndWipe(id);
+  db.prepare('UPDATE accounts SET number = NULL WHERE id = ?').run(id);
+  await connect(id);
+}
+
+// Unlinks the phone and removes the account entry altogether.
+export async function removeAccount(id) {
+  id = Number(id);
+  await closeAndWipe(id);
+  db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+  sessions.delete(id);
+}
+
+// ---------- sending ----------
 
 function withTimeout(promise, ms, label) {
   let timer;
@@ -157,18 +259,19 @@ async function deliver(s, jid, text, media) {
 }
 
 // number: digits only, international format without "+", e.g. 923001234567
-export async function send(number, text, media = null) {
-  if (!isConnected()) throw new Error('WhatsApp is not connected');
-  const s = sock;
+export async function send(accountId, number, text, media = null) {
+  if (!isConnected(accountId)) throw new Error('WhatsApp is not connected');
+  const sock = session(accountId).sock;
 
-  const lookup = await withTimeout(s.onWhatsApp(`${number}@s.whatsapp.net`), 30000, 'Number check');
+  const lookup = await withTimeout(sock.onWhatsApp(`${number}@s.whatsapp.net`), 30000, 'Number check');
   const hit = lookup?.[0];
   if (!hit?.exists) throw new Error('Number is not on WhatsApp');
 
-  await deliver(s, hit.jid, text, media);
+  await deliver(sock, hit.jid, text, media);
 }
 
-export async function sendToSelf(text, media = null) {
-  if (!isConnected()) throw new Error('WhatsApp is not connected');
+export async function sendToSelf(accountId, text, media = null) {
+  if (!isConnected(accountId)) throw new Error('WhatsApp is not connected');
+  const sock = session(accountId).sock;
   await deliver(sock, jidNormalizedUser(sock.user.id), text, media);
 }
